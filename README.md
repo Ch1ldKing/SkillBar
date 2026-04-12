@@ -7,7 +7,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Skill-blueviolet)](https://claude.ai/code)
 [![Nuwa](https://img.shields.io/badge/Inspired%20By-女娲.skill-orange)](https://github.com/alchaincyf/nuwa-skill)
-[![LinuxDO]()]
+[![LinuxDO](https://linux.do)]
 
 [简介](##简介) · [本地安装](##本地安装) · [Docker 部署](#docker-部署) · [更多skill](#更多skill)
 
