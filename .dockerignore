@@ -1,0 +1,8 @@
+.git
+.next
+.DS_Store
+node_modules
+data
+telegram-clone
+npm-debug.log*
+.env*
