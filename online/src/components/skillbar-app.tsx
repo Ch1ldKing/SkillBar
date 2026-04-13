@@ -806,7 +806,7 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
     >
       <Dialog onOpenChange={handleGuideDialogOpenChange} open={isGuideDialogOpen}>
         <DialogContent
-          className="max-w-[420px] border-none bg-transparent p-0 shadow-none sm:max-w-[420px]"
+          className="max-w-[420px] border-none bg-white p-0 shadow-none sm:max-w-[420px]"
           showCloseButton={false}
         >
           <DialogTitle className="sr-only">欢迎来到 SkillBar</DialogTitle>

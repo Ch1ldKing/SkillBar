@@ -180,7 +180,6 @@ export async function runAgentWork(
       maxTurns: 1,
       permissionMode: "dontAsk",
       persistSession: true,
-      model: "haiku",
       resume: work.agent.sessionId ?? undefined,
       stderr: (data) => {
         if (data.trim()) {
