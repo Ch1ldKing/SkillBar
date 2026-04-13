@@ -54,3 +54,8 @@ export type SkillBarSnapshot = {
   runtime: RuntimeSnapshot;
   viewer: ViewerSnapshot;
 };
+
+export type SkillBarBootstrap = {
+  authProviders: AuthProviderFlags;
+  snapshot: SkillBarSnapshot;
+};
