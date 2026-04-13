@@ -1,0 +1,7 @@
+node_modules
+.next
+npm-debug.log
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
+.env

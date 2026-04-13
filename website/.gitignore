@@ -23,6 +23,9 @@
 # misc
 .DS_Store
 *.pem
+data/*.sqlite
+data/*.sqlite-shm
+data/*.sqlite-wal
 
 # debug
 npm-debug.log*
@@ -39,8 +42,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# data
-data/
-.playwright_cli
-output/

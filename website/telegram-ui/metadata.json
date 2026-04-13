@@ -1,0 +1,5 @@
+{
+  "name": "Telegram Clone",
+  "description": "A clean, Telegram-style group chat interface with no extra features.",
+  "requestFramePermissions": []
+}
