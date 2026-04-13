@@ -3,7 +3,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "SkillBar Online",
-  description: "Online SkillBar group chat with optional login.",
+  description: "把 TA 的 SKILL 拉进来聊聊吧~",
   icons: {
     icon: "/icon",
   },

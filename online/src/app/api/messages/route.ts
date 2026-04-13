@@ -5,7 +5,15 @@ import {
   ensureSkillBarScheduler,
   kickSkillBarScheduler,
 } from "@/lib/skillbar-scheduler";
-import { addUserMessage } from "@/lib/skillbar-store";
+import {
+  UserInputGuardUnavailableError,
+  isUserInputAllowed,
+} from "@/lib/input-guard";
+import {
+  addUserMessage,
+  getAnthropicConfig,
+  getSnapshot,
+} from "@/lib/skillbar-store";
 import { getSessionFromRequest } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +39,30 @@ export async function POST(request: Request) {
       { error: parsed.error.issues[0]?.message ?? "消息格式错误。" },
       { status: 400 },
     );
+  }
+
+  let allowed = true;
+
+  try {
+    allowed = await isUserInputAllowed(parsed.data.content, getAnthropicConfig());
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof UserInputGuardUnavailableError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : "消息校验失败。",
+      },
+      {
+        status: error instanceof UserInputGuardUnavailableError ? 503 : 500,
+      },
+    );
+  }
+
+  if (!allowed) {
+    return NextResponse.json(getSnapshot(session.user));
   }
 
   try {

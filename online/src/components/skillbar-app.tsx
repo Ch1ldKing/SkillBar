@@ -57,7 +57,7 @@ const GUIDE_STORAGE_KEY = "skillbar-online-guide-v1";
 const GUIDE_FADE_DURATION_MS = 180;
 const SCROLL_BOTTOM_THRESHOLD = 72;
 const GITHUB_LINK = "https://github.com/Ch1ldKing/SkillBar";
-const XIAOHONGSHU_LINK = "https://www.xiaohongshu.com";
+const XIAOHONGSHU_LINK = "https://www.xiaohongshu.com/discovery/item/69dd001d000000001a02e0b2?app_platform=android&ignoreEngage=true&app_version=9.21.0&share_from_user_hidden=true&xsec_source=app_share&type=normal&xsec_token=CBWP2rVuvq9uA5Z6hfhzbPwp-lncrUJP_DK5Z7H-9yszw%3D&author_share=1&xhsshare=&shareRedId=N0w3REVGRUI2NzUyOTgwNjY0OTc1NThL&apptime=1776091729&share_id=b4c4dedc03f048d394ce8f8d244c5a9a&share_channel=wechat#pushState";
 
 const onboardingSteps = [
   {
@@ -203,8 +203,8 @@ function getStatusLabel(
   }
 }
 
-function getSidebarPreview(snapshot: SkillBarSnapshot) {
-  const latestMessage = snapshot.messages[snapshot.messages.length - 1];
+function getSidebarPreviewFromMessages(messages: SkillBarMessage[]) {
+  const latestMessage = messages[messages.length - 1];
 
   if (!latestMessage) {
     return "上传第一个 TA 的 Skill 吧";
@@ -307,6 +307,7 @@ function GitHubIcon({ className }: { className?: string }) {
 
 export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps) {
   const [snapshot, setSnapshot] = useState(initialSnapshot);
+  const [pendingMessage, setPendingMessage] = useState<SkillBarMessage | null>(null);
   const [composer, setComposer] = useState("");
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [isHistorySearchOpen, setIsHistorySearchOpen] = useState(false);
@@ -330,16 +331,31 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
   const guideTransitionTimeoutRef = useRef<number | null>(null);
   const hasInitializedMessageScrollRef = useRef(false);
 
+  const displayedMessages = useMemo(() => {
+    if (!pendingMessage) {
+      return snapshot.messages;
+    }
+
+    const alreadyPersisted = snapshot.messages.some(
+      (message) =>
+        message.senderId === pendingMessage.senderId &&
+        message.senderKind === pendingMessage.senderKind &&
+        message.content === pendingMessage.content &&
+        Math.abs(message.createdAt - pendingMessage.createdAt) < 30_000,
+    );
+
+    return alreadyPersisted ? snapshot.messages : [...snapshot.messages, pendingMessage];
+  }, [pendingMessage, snapshot.messages]);
   const agents = useMemo(
     () => snapshot.participants.filter((participant) => participant.kind === "agent"),
     [snapshot.participants],
   );
-  const deferredMessages = useDeferredValue(snapshot.messages);
+  const deferredMessages = useDeferredValue(displayedMessages);
   const thinkingCount = useMemo(
     () => agents.filter((participant) => participant.status === "thinking").length,
     [agents],
   );
-  const latestMessage = snapshot.messages[snapshot.messages.length - 1];
+  const latestMessage = displayedMessages[displayedMessages.length - 1];
   const visibleMessages = useMemo(() => {
     if (!historySearchQuery.trim()) {
       return deferredMessages;
@@ -384,11 +400,11 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
       return;
     }
 
-    const next = (await response.json()) as SkillBarSnapshot;
+      const next = (await response.json()) as SkillBarSnapshot;
 
-    startTransition(() => {
-      setSnapshot(next);
-    });
+      startTransition(() => {
+        setSnapshot(next);
+      });
   });
 
   useEffect(() => {
@@ -642,17 +658,33 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
     setChatError(null);
     setBusyAction("message");
 
+    const submittedContent = composer.trim();
+    const optimisticMessage: SkillBarMessage = {
+      createdAt: Date.now(),
+      content: submittedContent,
+      id: `optimistic:${crypto.randomUUID()}`,
+      senderId: viewer.participantId ?? (viewer.id ? `human:${viewer.id}` : "optimistic:self"),
+      senderKind: "human",
+      senderName: viewer.name ?? viewer.email ?? "You",
+      seq: snapshot.latestSeq + 1,
+    };
+
+    setPendingMessage(optimisticMessage);
+    setComposer("");
+
     try {
       const next = await postJson<SkillBarSnapshot>("/api/messages", {
-        content: composer,
+        content: submittedContent,
       });
 
       startTransition(() => {
         setSnapshot(next);
       });
-
-      setComposer("");
+      setPendingMessage(null);
     } catch (error) {
+      setPendingMessage(null);
+      setComposer(submittedContent);
+
       const message = error instanceof Error ? error.message : "发送消息失败。";
       setChatError(message);
 
@@ -1092,7 +1124,9 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
                     </span>
                   </div>
                   <div className="mt-1 flex items-center justify-between gap-3">
-                    <p className="truncate text-sm text-blue-100">{getSidebarPreview(snapshot)}</p>
+                    <p className="truncate text-sm text-blue-100">
+                      {getSidebarPreviewFromMessages(displayedMessages)}
+                    </p>
                     {thinkingCount > 0 ? (
                       <span className="min-w-[1.4rem] rounded-full bg-white/90 px-1.5 py-0.5 text-center text-[11px] font-medium text-blue-500">
                         {thinkingCount}

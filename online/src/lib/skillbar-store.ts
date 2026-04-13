@@ -131,6 +131,7 @@ const LAZY_BURST_LIMIT_MIN = 1;
 const LAZY_BURST_LIMIT_MAX = 5;
 const LAZY_COOLDOWN_MIN_MS = 30_000;
 const LAZY_COOLDOWN_MAX_MS = 120_000;
+const AGENT_ERROR_RETRY_MS = 5 * 60_000;
 const DEFAULT_MESSAGE_INTERVAL_MS = 60_000;
 
 export type AnthropicConfig = {
@@ -176,6 +177,14 @@ function normalizeBurstMessageLimit(limit: number) {
   }
 
   return drawBurstMessageLimit();
+}
+
+function getAgentErrorRetryDueAt(agent: Pick<AgentRecord, "status" | "updatedAt">) {
+  if (agent.status !== "error") {
+    return 0;
+  }
+
+  return agent.updatedAt + AGENT_ERROR_RETRY_MS;
 }
 
 function buildNextLazyState(agent: AgentRecord, sentAt: number) {
@@ -712,7 +721,7 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
       null,
       "System",
       "system",
-      `${existing.name} 带着新的 Skill 重新进入了群聊。`,
+      `${existing.name} 带着新的 Skill 重新进入了群聊`,
     );
   } else {
     db.prepare(
@@ -737,7 +746,7 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
       `,
     ).run(randomUUID(), trimmedName, trimmedSkill, drawBurstMessageLimit(), updatedAt, updatedAt);
 
-    insertMessage(null, "System", "system", `${trimmedName} 进入了群聊。`);
+    insertMessage(null, "System", "system", `${trimmedName} 进入了群聊`);
   }
 
   return getSnapshot();
@@ -901,7 +910,13 @@ export function getPendingAgentWork(limit: number) {
   const proactiveCandidates: WorkCandidate[] = [];
 
   for (const agent of agents) {
-    if (agent.status === "thinking" || agent.status === "error") {
+    if (agent.status === "thinking") {
+      continue;
+    }
+
+    const errorRetryDueAt = getAgentErrorRetryDueAt(agent);
+
+    if (currentTime < errorRetryDueAt) {
       continue;
     }
 
@@ -917,7 +932,7 @@ export function getPendingAgentWork(limit: number) {
           GREETING_DELAY_MIN_MS,
           GREETING_DELAY_JITTER_MS,
         );
-      const dueAt = Math.max(greetingDueAt, lazyDueAt);
+      const dueAt = Math.max(greetingDueAt, lazyDueAt, errorRetryDueAt);
 
       if (currentTime < dueAt) {
         continue;
@@ -951,7 +966,7 @@ export function getPendingAgentWork(limit: number) {
         REPLY_DELAY_MIN_MS,
         REPLY_DELAY_JITTER_MS,
       );
-    const dueAt = Math.max(replyDueAt, lazyDueAt);
+    const dueAt = Math.max(replyDueAt, lazyDueAt, errorRetryDueAt);
 
     if (currentTime < dueAt) {
       continue;
@@ -983,7 +998,13 @@ export function getPendingAgentWork(limit: number) {
   }
 
   for (const agent of agents) {
-    if (agent.status === "thinking" || agent.status === "error") {
+    if (agent.status === "thinking") {
+      continue;
+    }
+
+    const errorRetryDueAt = getAgentErrorRetryDueAt(agent);
+
+    if (currentTime < errorRetryDueAt) {
       continue;
     }
 
@@ -999,7 +1020,11 @@ export function getPendingAgentWork(limit: number) {
         PROACTIVE_IDLE_MIN_MS,
         PROACTIVE_IDLE_JITTER_MS,
       ) + selfPenalty;
-    const proactiveDueAt = Math.max(anchorTime + proactiveDelay, agent.cooldownUntil ?? 0);
+    const proactiveDueAt = Math.max(
+      anchorTime + proactiveDelay,
+      agent.cooldownUntil ?? 0,
+      errorRetryDueAt,
+    );
 
     if (currentTime < proactiveDueAt) {
       continue;

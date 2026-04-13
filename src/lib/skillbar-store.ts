@@ -827,7 +827,7 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
       null,
       "System",
       "system",
-      `${trimmedName} 带着新的 Skill 重新进入了群聊。`,
+      `${trimmedName} 带着新的 Skill 重新进入了群聊`,
     );
   } else {
     db.prepare(
@@ -852,7 +852,7 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
       `,
     ).run(randomUUID(), trimmedName, trimmedSkill, drawBurstMessageLimit(), updatedAt, updatedAt);
 
-    insertMessage(null, "System", "system", `${trimmedName} 进入了群聊。`);
+    insertMessage(null, "System", "system", `${trimmedName} 进入了群聊`);
   }
 
   return getSnapshot();
