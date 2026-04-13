@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomInt, randomUUID } from "crypto";
 
+import { normalizeAgentName } from "@/lib/agent-name";
 import { getDatabase } from "@/lib/db";
 import type {
   RuntimeSnapshot,
@@ -655,27 +656,35 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
 
   const db = getDatabase();
   const trimmedName = name.trim();
+  const normalizedName = normalizeAgentName(name);
   const trimmedSkill = skillContent.trim();
 
   if (!trimmedName) {
     throw new Error("这个 Skill 的原主人姓名不能为空。");
   }
 
+  if (!normalizedName) {
+    throw new Error("Agent 名字里至少要有一个文字或数字。");
+  }
+
   if (!trimmedSkill) {
     throw new Error("SKILL.md 不能为空。");
   }
 
-  const existing = db
+  const existingAgents = db
     .prepare(
       `
         SELECT
           ${PARTICIPANT_SELECT_COLUMNS}
         FROM participants
-        WHERE kind = 'agent' AND name = ?
-        LIMIT 1
+        WHERE kind = 'agent'
+        ORDER BY created_at ASC
       `,
     )
-    .get(trimmedName) as ParticipantRow | undefined;
+    .all() as ParticipantRow[];
+  const existing = existingAgents.find(
+    (participant) => normalizeAgentName(participant.name) === normalizedName,
+  );
 
   const updatedAt = now();
 
@@ -703,7 +712,7 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
       null,
       "System",
       "system",
-      `${trimmedName} 带着新的 Skill 重新进入了群聊。`,
+      `${existing.name} 带着新的 Skill 重新进入了群聊。`,
     );
   } else {
     db.prepare(

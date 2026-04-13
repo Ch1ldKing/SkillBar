@@ -38,6 +38,7 @@ import {
   DialogDescription,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { normalizeAgentName } from "@/lib/agent-name";
 import { cn } from "@/lib/utils";
 import type {
   AuthProviderFlags,
@@ -60,14 +61,14 @@ const XIAOHONGSHU_LINK = "https://www.xiaohongshu.com";
 
 const onboardingSteps = [
   {
-    description: "选择您蒸馏的 Skill，将其拖入聊天框，或点击左侧附件按钮上传。",
+    description: "选择您蒸馏的 Skill，一键拖进聊天框，或点击左侧附件按钮上传。",
     emoji: "🧩",
-    title: "拖入你的 Skill",
+    title: "一键拖入你的 Skill",
   },
   {
-    description: "上传后补上名字，SkillBar 会立刻把 TA 放进对话里。",
+    description: "上传后填上名字，SkillBar 会立刻把 TA 放进对话里。",
     emoji: "🏷️",
-    title: "为 TA 起名字",
+    title: "填上 TA 的名字",
   },
   {
     description: "先观察他们的聊天，登录后你也可以随时参与发言。",
@@ -352,6 +353,19 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
   const isDroppedSkillPromptOpen = Boolean(pendingSkillFile);
   const viewer = snapshot.viewer;
   const runtimeReady = snapshot.runtime.ready;
+  const normalizedPendingSkillOwner = useMemo(
+    () => normalizeAgentName(pendingSkillOwner),
+    [pendingSkillOwner],
+  );
+  const pendingSkillOwnerMatch = useMemo(
+    () =>
+      normalizedPendingSkillOwner
+        ? agents.find(
+            (participant) => normalizeAgentName(participant.name) === normalizedPendingSkillOwner,
+          ) ?? null
+        : null,
+    [agents, normalizedPendingSkillOwner],
+  );
   const authStatusText = viewer.isAdmin
     ? "管理员 · 不限频"
     : `已登录 · ${formatIntervalText(viewer.messageIntervalMs)} 1 条`;
@@ -561,6 +575,11 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
 
     if (!pendingSkillOwner.trim()) {
       setChatError("请输入这个 Skill 的原主人姓名。");
+      return;
+    }
+
+    if (!normalizedPendingSkillOwner) {
+      setChatError("Agent 名字里至少要有一个文字或数字。");
       return;
     }
 
@@ -795,16 +814,8 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
             三步就能把新的 Skill 拉进群聊里。
           </DialogDescription>
 
-          <div className="relative px-3 py-1 sm:px-0">
-            <button
-              className="absolute top-0 right-3 z-40 inline-flex size-10 items-center justify-center rounded-full border border-slate-200 bg-white/94 text-slate-400 shadow-[0_12px_30px_rgba(15,23,42,0.08)] transition-colors hover:text-slate-700 sm:right-0"
-              onClick={dismissGuideDialog}
-              type="button"
-            >
-              <X className="size-4" />
-            </button>
-
-            <div className="mx-auto flex min-h-[430px] w-full max-w-[390px] flex-col rounded-[28px] border border-slate-200/85 bg-white/96 px-6 py-6 shadow-[0_28px_80px_rgba(15,23,42,0.12)]">
+          <div className="px-3 py-1 sm:px-0">
+            <div className="mx-auto flex min-h-[430px] w-full max-w-[390px] flex-col px-6 py-6">
               <div
                 className={cn(
                   "flex flex-1 flex-col justify-between transition-all",
@@ -817,7 +828,9 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
                     <p className="text-[11px] font-semibold tracking-[0.24em] text-slate-400 uppercase">
                       Step {activeGuideStep + 1}
                     </p>
-                    <p className="mt-4 text-3xl">{onboardingSteps[activeGuideStep].emoji}</p>
+                    <p className="mt-4 text-5xl sm:text-[56px]">
+                      {onboardingSteps[activeGuideStep].emoji}
+                    </p>
                   </div>
                   <div className="rounded-full bg-blue-50 px-2.5 py-1 text-[11px] font-medium text-blue-600">
                     {activeGuideStep + 1} / {onboardingSteps.length}
@@ -951,6 +964,20 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
                 type="text"
                 value={pendingSkillOwner}
               />
+              {pendingSkillOwner.trim() ? (
+                <p
+                  className={cn(
+                    "text-sm leading-6",
+                    normalizedPendingSkillOwner ? "text-slate-500" : "text-rose-500",
+                  )}
+                >
+                  {normalizedPendingSkillOwner
+                    ? pendingSkillOwnerMatch
+                      ? `已存在“${pendingSkillOwnerMatch.name}”，本次会直接更新 TA 的 Skill。`
+                      : "名字唯一，可以放心把 TA 拉进群聊。"
+                    : "名字里至少要包含一个文字或数字。"}
+                </p>
+              ) : null}
               <div className="flex items-center justify-end gap-2">
                 <button
                   className="inline-flex h-10 items-center justify-center rounded-full border border-slate-200 px-4 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-100"
@@ -961,7 +988,7 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
                 </button>
                 <button
                   className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-blue-500 px-4 text-sm font-medium text-white transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={busyAction === "skill"}
+                  disabled={busyAction === "skill" || Boolean(pendingSkillOwner.trim()) && !normalizedPendingSkillOwner}
                   type="submit"
                 >
                   <Upload className="h-4 w-4" />
