@@ -7,7 +7,6 @@ import {
   getAnthropicConfig,
   getPendingAgentWork,
   hasAnthropicCredentials,
-  isSchedulerPaused,
   markAgentError,
   markAgentThinking,
 } from "@/lib/skillbar-store";
@@ -55,7 +54,7 @@ async function launchAgentWork(work: AgentWork) {
   try {
     const result = await runAgentWork(work, anthropic);
 
-    if (result.message && !isSchedulerPaused()) {
+    if (result.message) {
       addAgentMessage(agentId, result.message);
     }
 
@@ -84,7 +83,7 @@ export async function tickScheduler() {
 
   try {
     const anthropic = getAnthropicConfig();
-    if (!hasAnthropicCredentials(anthropic) || isSchedulerPaused()) {
+    if (!hasAnthropicCredentials(anthropic)) {
       return;
     }
 

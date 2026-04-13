@@ -25,7 +25,7 @@ ${skillContent}
 </skill>
 
 群聊行为规则：
-- 这是一个名为 SkillBar 的本地群聊
+- 这是一个名为 SkillBar 的线上群聊
 - 默认使用简体中文发言，除非你的人设明确要求其他语言
 - 你在群里发言时，只输出一条可以直接发出去的消息正文
 - 不要输出名字前缀，不要加引号，不要使用 Markdown，不要解释自己在做什么
@@ -163,7 +163,7 @@ function buildEnv(config: AnthropicConfig) {
     env.ANTHROPIC_BASE_URL = config.baseUrl;
   }
 
-  env.CLAUDE_AGENT_SDK_CLIENT_APP = "skillbar/0.1.0";
+  env.CLAUDE_AGENT_SDK_CLIENT_APP = "skillbar-online/0.1.0";
 
   return env;
 }

@@ -8,21 +8,24 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type DragEvent,
   type FormEvent,
   type KeyboardEvent,
 } from "react";
 import {
+  ArrowDown,
   CheckCheck,
   KeyRound,
   Menu,
-  Mic,
   MoreVertical,
   Paperclip,
+  Pause,
   Phone,
+  Play,
+  RotateCcw,
   Search,
-  Send,
-  Smile,
+  SendHorizontal,
   Upload,
   X,
 } from "lucide-react";
@@ -45,6 +48,7 @@ type AnthropicFormState = {
 };
 
 const MOBILE_MEDIA_QUERY = "(max-width: 767px)";
+const SCROLL_BOTTOM_THRESHOLD = 72;
 
 const timeFormatter = new Intl.DateTimeFormat("zh-CN", {
   hour: "2-digit",
@@ -89,16 +93,27 @@ function formatSidebarTime(timestamp: number) {
 
 function getInitials(name: string) {
   const trimmed = name.trim();
+  const compact = trimmed.replace(/\s+/g, "");
 
-  if (!trimmed) {
+  if (!compact) {
     return "SB";
   }
 
-  return trimmed
-    .split("")
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+  if (/[\u3400-\u9fff]/.test(compact)) {
+    return compact.slice(-2);
+  }
+
+  const parts = trimmed.split(/\s+/).filter(Boolean);
+
+  if (parts.length > 1) {
+    return parts
+      .slice(0, 2)
+      .map((part) => part[0] ?? "")
+      .join("")
+      .toUpperCase();
+  }
+
+  return compact.slice(0, 2).toUpperCase();
 }
 
 function getHashIndex(value: string, modulo: number) {
@@ -119,7 +134,11 @@ function getAvatarTone(name: string) {
   return avatarToneClasses[getHashIndex(name, avatarToneClasses.length)];
 }
 
-function getStatusLabel(participant: SkillBarParticipant, credentialsConfigured: boolean) {
+function getStatusLabel(
+  participant: SkillBarParticipant,
+  credentialsConfigured: boolean,
+  schedulerPaused: boolean,
+) {
   if (participant.kind === "human") {
     return "You";
   }
@@ -130,6 +149,10 @@ function getStatusLabel(participant: SkillBarParticipant, credentialsConfigured:
 
   if (participant.needsGreeting && !participant.hasSession) {
     return "Joining";
+  }
+
+  if (schedulerPaused && participant.status === "idle") {
+    return "Paused";
   }
 
   switch (participant.status) {
@@ -228,7 +251,9 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
   });
   const [historySearchQuery, setHistorySearchQuery] = useState("");
   const [isHistorySearchOpen, setIsHistorySearchOpen] = useState(false);
-  const [busyAction, setBusyAction] = useState<"anthropic" | "skill" | "message" | null>(null);
+  const [busyAction, setBusyAction] = useState<
+    "anthropic" | "skill" | "message" | "control" | null
+  >(null);
   const [sidebarError, setSidebarError] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [noticeMessage, setNoticeMessage] = useState<string | null>(null);
@@ -237,16 +262,20 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
   const [dragDepth, setDragDepth] = useState(0);
   const [pendingSkillFile, setPendingSkillFile] = useState<File | null>(null);
   const [pendingSkillOwner, setPendingSkillOwner] = useState("");
+  const [showScrollToBottomButton, setShowScrollToBottomButton] = useState(false);
 
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const historySearchInputRef = useRef<HTMLInputElement | null>(null);
   const droppedSkillOwnerInputRef = useRef<HTMLInputElement | null>(null);
+  const skillFileInputRef = useRef<HTMLInputElement | null>(null);
+  const hasInitializedMessageScrollRef = useRef(false);
 
   const agents = useMemo(
     () => snapshot.participants.filter((participant) => participant.kind === "agent"),
     [snapshot.participants],
   );
   const credentialsConfigured = snapshot.anthropic.credentialsConfigured;
+  const schedulerPaused = snapshot.scheduler.paused;
   const deferredMessages = useDeferredValue(snapshot.messages);
   const thinkingCount = useMemo(
     () => agents.filter((participant) => participant.status === "thinking").length,
@@ -290,19 +319,6 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
   }, []);
 
   useEffect(() => {
-    const container = messagesContainerRef.current;
-
-    if (!container || historySearchQuery.trim()) {
-      return;
-    }
-
-    container.scrollTo({
-      top: container.scrollHeight,
-      behavior: "smooth",
-    });
-  }, [deferredMessages.length, historySearchQuery]);
-
-  useEffect(() => {
     if (!noticeMessage) {
       return;
     }
@@ -339,6 +355,57 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
 
   function showComingSoon(message = "敬请期待") {
     setNoticeMessage(message);
+  }
+
+  function openSkillFilePicker() {
+    skillFileInputRef.current?.click();
+  }
+
+  function queueSkillFile(skillFile: File | null) {
+    if (!skillFile) {
+      return;
+    }
+
+    if (!skillFile.name.toLowerCase().endsWith(".md")) {
+      setChatError("请上传一个 SKILL.md 文件。");
+      return;
+    }
+
+    setChatError(null);
+    setPendingSkillFile(skillFile);
+    setPendingSkillOwner("");
+  }
+
+  function handleSkillFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0] ?? null;
+    queueSkillFile(file);
+    event.target.value = "";
+  }
+
+  const updateScrollToBottomButton = useEffectEvent((container: HTMLDivElement | null) => {
+    if (!container || historySearchQuery.trim()) {
+      setShowScrollToBottomButton(false);
+      return;
+    }
+
+    const distanceFromBottom =
+      container.scrollHeight - container.clientHeight - container.scrollTop;
+
+    setShowScrollToBottomButton(distanceFromBottom > SCROLL_BOTTOM_THRESHOLD);
+  });
+
+  function scrollMessagesToBottom(behavior: ScrollBehavior = "smooth") {
+    const container = messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    container.scrollTo({
+      behavior,
+      top: container.scrollHeight,
+    });
+    setShowScrollToBottomButton(false);
   }
 
   function toggleSidebarFromSidebarButton() {
@@ -474,6 +541,55 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
     await submitMessage();
   }
 
+  async function runControlAction(action: "pause" | "resume" | "reset") {
+    setSidebarError(null);
+    setChatError(null);
+    setBusyAction("control");
+
+    try {
+      const next = await postJson<SkillBarSnapshot>("/api/control", {
+        action,
+      });
+
+      startTransition(() => {
+        setSnapshot(next);
+      });
+
+      if (action === "reset") {
+        setComposer("");
+        setHistorySearchQuery("");
+        setIsHistorySearchOpen(false);
+        setPendingSkillFile(null);
+        setPendingSkillOwner("");
+        setDragDepth(0);
+        setNoticeMessage("已清空成员和聊天记录");
+        return;
+      }
+
+      setNoticeMessage(action === "pause" ? "已暂停 Agent 输出" : "已恢复 Agent 输出");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "执行控制操作失败。";
+      setSidebarError(message);
+      setChatError(message);
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function handlePauseToggle() {
+    await runControlAction(schedulerPaused ? "resume" : "pause");
+  }
+
+  async function handleReset() {
+    const confirmed = window.confirm("这会清空所有 Agent 和全部聊天记录，确定继续吗？");
+
+    if (!confirmed) {
+      return;
+    }
+
+    await runControlAction("reset");
+  }
+
   function handleMessageKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -528,9 +644,7 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
       return;
     }
 
-    setChatError(null);
-    setPendingSkillFile(skillFile);
-    setPendingSkillOwner("");
+    queueSkillFile(skillFile);
   }
 
   function closeDroppedSkillPrompt() {
@@ -564,6 +678,43 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
     return renderHighlightedText(name, query);
   }
 
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (!hasInitializedMessageScrollRef.current && !historySearchQuery.trim()) {
+      container.scrollTo({
+        behavior: "auto",
+        top: container.scrollHeight,
+      });
+      hasInitializedMessageScrollRef.current = true;
+    }
+
+    updateScrollToBottomButton(container);
+  }, [deferredMessages.length, historySearchQuery]);
+
+  useEffect(() => {
+    const container = messagesContainerRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    const handleScroll = () => {
+      updateScrollToBottomButton(container);
+    };
+
+    handleScroll();
+    container.addEventListener("scroll", handleScroll, { passive: true });
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+    };
+  }, [historySearchQuery]);
+
   return (
     <div
       className="flex h-screen w-full overflow-hidden bg-white font-sans text-slate-900"
@@ -572,6 +723,14 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
       onDragOver={handleMainDragOver}
       onDrop={handleMainDrop}
     >
+      <input
+        accept=".md,.markdown,text/markdown"
+        className="hidden"
+        onChange={handleSkillFileChange}
+        ref={skillFileInputRef}
+        type="file"
+      />
+
       <button
         aria-hidden={!sidebarOpen}
         className={cn(
@@ -702,15 +861,19 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
                     {latestMessage ? formatSidebarTime(latestMessage.createdAt) : ""}
                   </span>
                 </div>
-                <div className="flex items-center justify-between gap-3">
-                  <p className="truncate text-sm text-blue-100">{getSidebarPreview(snapshot)}</p>
-                  {thinkingCount > 0 ? (
-                    <span className="min-w-[1.25rem] shrink-0 rounded-full bg-white px-1.5 py-0.5 text-center text-xs font-medium text-blue-500">
-                      {thinkingCount}
-                    </span>
-                  ) : null}
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="truncate text-sm text-blue-100">{getSidebarPreview(snapshot)}</p>
+                    {schedulerPaused ? (
+                      <span className="shrink-0 rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-amber-600">
+                        已暂停
+                      </span>
+                    ) : thinkingCount > 0 ? (
+                      <span className="min-w-[1.25rem] shrink-0 rounded-full bg-white px-1.5 py-0.5 text-center text-xs font-medium text-blue-500">
+                        {thinkingCount}
+                      </span>
+                    ) : null}
+                  </div>
                 </div>
-              </div>
             </button>
 
             <div className="border-t border-slate-100 p-3">
@@ -795,6 +958,56 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
                 </section>
 
                 <section className="rounded-3xl border border-slate-200 bg-slate-50 p-3">
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-900">Agent 调度</h3>
+                      <p className="mt-1 text-xs leading-5 text-slate-500">
+                        暂停会停止 Agent 继续输出，重置会清空所有 Agent 和聊天记录。
+                      </p>
+                    </div>
+                    <span
+                      className={cn(
+                        "rounded-full px-2 py-0.5 text-[11px] font-medium",
+                        schedulerPaused
+                          ? "bg-amber-100 text-amber-700"
+                          : "bg-emerald-100 text-emerald-700",
+                      )}
+                    >
+                      {schedulerPaused ? "Paused" : "Running"}
+                    </span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      className={cn(
+                        "inline-flex h-10 items-center justify-center gap-2 rounded-full px-4 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-60",
+                        schedulerPaused
+                          ? "bg-emerald-500 text-white hover:bg-emerald-600"
+                          : "bg-amber-500 text-white hover:bg-amber-600",
+                      )}
+                      disabled={busyAction === "control"}
+                      onClick={() => void handlePauseToggle()}
+                      type="button"
+                    >
+                      {schedulerPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
+                      {busyAction === "control"
+                        ? "处理中..."
+                        : schedulerPaused
+                          ? "继续输出"
+                          : "暂停输出"}
+                    </button>
+                    <button
+                      className="inline-flex h-10 items-center justify-center gap-2 rounded-full bg-rose-500 px-4 text-sm font-medium text-white transition-colors hover:bg-rose-600 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={busyAction === "control"}
+                      onClick={() => void handleReset()}
+                      type="button"
+                    >
+                      <RotateCcw className="h-4 w-4" />
+                      {busyAction === "control" ? "处理中..." : "重置群聊"}
+                    </button>
+                  </div>
+                </section>
+
+                <section className="rounded-3xl border border-slate-200 bg-slate-50 p-3">
                   <div className="mb-2">
                     <h3 className="text-sm font-semibold text-slate-900">Members</h3>
                     <p className="mt-1 text-xs leading-5 text-slate-500">
@@ -813,7 +1026,7 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
                             {participant.name}
                           </p>
                           <p className="truncate text-xs text-slate-500">
-                            {getStatusLabel(participant, credentialsConfigured)}
+                            {getStatusLabel(participant, credentialsConfigured, schedulerPaused)}
                           </p>
                         </div>
                       </div>
@@ -855,10 +1068,7 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
         <div className="z-10 flex h-14 shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 shadow-sm">
           <div className="flex items-center gap-3">
             <button
-              className={cn(
-                "text-slate-500 transition-colors hover:text-slate-700",
-                sidebarCollapsed ? "md:inline-flex" : "md:hidden",
-              )}
+              className="text-slate-500 transition-colors hover:text-slate-700 md:hidden"
               onClick={openSidebarFromChat}
               type="button"
             >
@@ -870,6 +1080,7 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
               <p className="text-xs text-slate-500">
                 {snapshot.participants.length} members
                 {thinkingCount > 0 ? `, ${thinkingCount} thinking` : ""}
+                {schedulerPaused ? ", agents paused" : ""}
               </p>
             </div>
           </div>
@@ -929,6 +1140,12 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
           </div>
         ) : null}
 
+        {schedulerPaused ? (
+          <div className="z-10 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-800">
+            Agent 输出已暂停，你仍然可以继续发消息；恢复后，新的调度会继续运行
+          </div>
+        ) : null}
+
         <div className="z-10 flex flex-1 flex-col gap-2 overflow-y-auto p-4" ref={messagesContainerRef}>
           <div className="my-2 flex justify-center">
             <span className="rounded-full bg-black/10 px-2.5 py-1 text-xs font-medium text-white backdrop-blur-sm">
@@ -970,7 +1187,6 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
                   className={cn(
                     "flex max-w-[75%]",
                     isSelf ? "self-end" : "self-start",
-                    !isSelf && !showAvatar ? "ml-11" : "",
                     isFirstInGroup ? "mt-1" : "",
                   )}
                   key={message.id}
@@ -1009,6 +1225,17 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
           )}
         </div>
 
+        {showScrollToBottomButton ? (
+          <button
+            className="absolute right-4 bottom-24 z-20 inline-flex size-11 items-center justify-center rounded-full border border-blue-200 bg-white/94 text-blue-500 shadow-[0_18px_40px_rgba(51,144,236,0.16)] backdrop-blur transition-colors hover:border-blue-300 hover:text-blue-600"
+            onClick={() => scrollMessagesToBottom()}
+            type="button"
+          >
+            <ArrowDown className="size-5" />
+            <span className="sr-only">回到底部</span>
+          </button>
+        ) : null}
+
         <div className="z-10 shrink-0 bg-white p-3">
           {chatError ? (
             <div className="mx-auto mb-2 max-w-4xl rounded-2xl bg-rose-50 px-3 py-2 text-sm text-rose-600">
@@ -1018,24 +1245,15 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
 
           <form className="mx-auto flex max-w-4xl items-end gap-2" onSubmit={handleMessageSubmit}>
             <button
-              className="mb-1 shrink-0 p-2 text-slate-400 transition-colors hover:text-slate-600"
-              onClick={() =>
-                showComingSoon("敬请期待，当前请把 SKILL.md 直接拖入群聊界面。")
-              }
+              className="mb-1 inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 transition-colors hover:border-slate-300 hover:text-slate-700"
+              onClick={openSkillFilePicker}
               type="button"
             >
-              <Paperclip className="h-6 w-6" />
+              <Paperclip className="size-5" />
             </button>
-            <div className="flex flex-1 items-end rounded-2xl border border-slate-200 bg-white shadow-sm transition-all focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400">
-              <button
-                className="shrink-0 p-2.5 text-slate-400 transition-colors hover:text-slate-600"
-                onClick={() => showComingSoon("敬请期待")}
-                type="button"
-              >
-                <Smile className="h-6 w-6" />
-              </button>
+            <div className="flex flex-1 items-end rounded-[22px] border border-slate-200 bg-white px-3 shadow-sm transition-all focus-within:border-blue-400 focus-within:ring-1 focus-within:ring-blue-400">
               <textarea
-                className="max-h-32 min-h-[44px] flex-1 resize-none bg-transparent px-2 py-2.5 text-[15px] leading-relaxed focus:outline-none"
+                className="max-h-32 min-h-[46px] flex-1 resize-none bg-transparent py-3 text-[15px] leading-relaxed focus:outline-none"
                 onChange={(event) => setComposer(event.target.value)}
                 onKeyDown={handleMessageKeyDown}
                 placeholder="Write a message..."
@@ -1043,23 +1261,13 @@ export function SkillBarApp({ initialSnapshot }: SkillBarAppProps) {
                 value={composer}
               />
             </div>
-            {composer.trim() ? (
-              <button
-                className="mb-0.5 shrink-0 rounded-full bg-blue-500 p-3 text-white shadow-sm transition-colors hover:bg-blue-600 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={busyAction === "message"}
-                type="submit"
-              >
-                <Send className="ml-0.5 h-5 w-5" />
-              </button>
-            ) : (
-              <button
-                className="mb-0.5 shrink-0 p-3 text-slate-400 transition-colors hover:text-slate-600"
-                onClick={() => showComingSoon("敬请期待")}
-                type="button"
-              >
-                <Mic className="h-6 w-6" />
-              </button>
-            )}
+            <button
+              className="mb-0.5 inline-flex size-11 shrink-0 items-center justify-center rounded-full border border-blue-200 bg-white text-blue-500 transition-colors hover:border-blue-300 hover:text-blue-600 disabled:cursor-not-allowed disabled:border-slate-200 disabled:text-slate-300"
+              disabled={busyAction === "message" || !composer.trim()}
+              type="submit"
+            >
+              <SendHorizontal className="size-5" />
+            </button>
           </form>
         </div>
       </main>

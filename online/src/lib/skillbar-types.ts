@@ -24,21 +24,33 @@ export type SkillBarMessage = {
   createdAt: number;
 };
 
-export type AnthropicSettingsSnapshot = {
-  apiKeyConfigured: boolean;
-  authTokenConfigured: boolean;
-  baseUrlConfigured: boolean;
-  credentialsConfigured: boolean;
+export type AuthProviderFlags = {
+  email: boolean;
+  github: boolean;
+  linuxdo: boolean;
 };
 
-export type SchedulerSnapshot = {
-  paused: boolean;
+export type ViewerSnapshot = {
+  authenticated: boolean;
+  canSendMessage: boolean;
+  email: string | null;
+  id: string | null;
+  isAdmin: boolean;
+  messageIntervalMs: number;
+  name: string | null;
+  nextAllowedMessageAt: number | null;
+  participantId: string | null;
+  remainingCooldownMs: number;
+};
+
+export type RuntimeSnapshot = {
+  ready: boolean;
 };
 
 export type SkillBarSnapshot = {
-  anthropic: AnthropicSettingsSnapshot;
-  scheduler: SchedulerSnapshot;
-  participants: SkillBarParticipant[];
-  messages: SkillBarMessage[];
   latestSeq: number;
+  messages: SkillBarMessage[];
+  participants: SkillBarParticipant[];
+  runtime: RuntimeSnapshot;
+  viewer: ViewerSnapshot;
 };

@@ -1,0 +1,235 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --font-sans:
+    "SF Pro Text", "SF Pro Display", "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  --font-plex-mono:
+    "SF Mono", "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
+  --background: #d7e2ec;
+  --foreground: #243447;
+  --surface: rgba(255, 255, 255, 0.72);
+  --surface-strong: rgba(255, 255, 255, 0.92);
+  --line: rgba(88, 117, 146, 0.14);
+  --chat-wallpaper: #dbe6ef;
+  --message-in: rgba(255, 255, 255, 0.96);
+  --message-out: #effdde;
+  --thinking: #3390ec;
+  --card: #ffffff;
+  --card-foreground: #243447;
+  --popover: #ffffff;
+  --popover-foreground: #243447;
+  --primary: #3390ec;
+  --primary-foreground: #ffffff;
+  --secondary: #eef3f8;
+  --secondary-foreground: #34495e;
+  --muted: #edf3f8;
+  --muted-foreground: #74879a;
+  --accent: #e8f1fb;
+  --accent-foreground: #243447;
+  --destructive: #e15b64;
+  --border: #d8e3ec;
+  --input: #d8e3ec;
+  --ring: #92c5f7;
+  --chart-1: #3390ec;
+  --chart-2: #60a2eb;
+  --chart-3: #76b5f3;
+  --chart-4: #9bcaf4;
+  --chart-5: #c5def8;
+  --radius: 0.9rem;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #243447;
+  --sidebar-primary: #3390ec;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eef3f8;
+  --sidebar-accent-foreground: #243447;
+  --sidebar-border: #d8e3ec;
+  --sidebar-ring: #92c5f7;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-plex-mono);
+  --font-heading: var(--font-sans);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  color-scheme: light;
+}
+
+body {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0) 24%),
+    linear-gradient(180deg, #dfe8f0 0%, #cfdce8 100%);
+  font-family: var(--font-sans), sans-serif;
+}
+
+::selection {
+  background: rgba(51, 144, 236, 0.22);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(27, 24, 21, 0.14);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.message-rise {
+  animation: rise-in 220ms ease-out;
+}
+
+.telegram-frame {
+  background: var(--surface);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  box-shadow:
+    0 28px 90px rgba(36, 52, 71, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(24px);
+}
+
+.telegram-wallpaper {
+  background-color: var(--chat-wallpaper);
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.34), rgba(216, 228, 238, 0.72)),
+    radial-gradient(circle at 24px 24px, rgba(255, 255, 255, 0.52) 0 2px, transparent 2.5px),
+    radial-gradient(circle at 0 0, rgba(108, 135, 159, 0.09) 0 1px, transparent 1.5px);
+  background-size: auto, 38px 38px, 24px 24px;
+}
+
+.bubble-in {
+  background: var(--message-in);
+  box-shadow:
+    0 10px 28px rgba(52, 73, 94, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.75) inset;
+}
+
+.bubble-out {
+  background: var(--message-out);
+  box-shadow:
+    0 10px 28px rgba(52, 73, 94, 0.08),
+    0 1px 0 rgba(255, 255, 255, 0.58) inset;
+}
+
+.bubble-system {
+  background: rgba(97, 118, 140, 0.16);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  backdrop-filter: blur(10px);
+}
+
+.composer-shell {
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 -8px 28px rgba(36, 52, 71, 0.05);
+}
+
+.dark {
+  --background: #17212b;
+  --foreground: #f2f6fb;
+  --surface: rgba(32, 43, 58, 0.9);
+  --surface-strong: rgba(37, 49, 66, 0.96);
+  --line: rgba(255, 255, 255, 0.08);
+  --chat-wallpaper: #203040;
+  --message-in: #223446;
+  --message-out: #2b5278;
+  --card: #1f2c3a;
+  --card-foreground: #f2f6fb;
+  --popover: #1f2c3a;
+  --popover-foreground: #f2f6fb;
+  --primary: #4ea3f3;
+  --primary-foreground: #f2f6fb;
+  --secondary: #25384b;
+  --secondary-foreground: #f2f6fb;
+  --muted: #243546;
+  --muted-foreground: #95a6b8;
+  --accent: #263b4f;
+  --accent-foreground: #f2f6fb;
+  --destructive: #ee6e7a;
+  --border: rgba(255, 255, 255, 0.1);
+  --input: rgba(255, 255, 255, 0.14);
+  --ring: #5bacf5;
+  --sidebar: #1f2c3a;
+  --sidebar-foreground: #f2f6fb;
+  --sidebar-primary: #4ea3f3;
+  --sidebar-primary-foreground: #f2f6fb;
+  --sidebar-accent: #263b4f;
+  --sidebar-accent-foreground: #f2f6fb;
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-ring: #5bacf5;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
+}

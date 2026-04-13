@@ -1,27 +1,15 @@
 import "server-only";
 
-import Database from "better-sqlite3";
 import { randomInt, randomUUID } from "crypto";
-import { mkdirSync } from "fs";
-import path from "path";
 
+import { getDatabase } from "@/lib/db";
 import type {
-  AnthropicSettingsSnapshot,
-  SchedulerSnapshot,
+  RuntimeSnapshot,
   SkillBarMessage,
   SkillBarParticipant,
   SkillBarSnapshot,
+  ViewerSnapshot,
 } from "@/lib/skillbar-types";
-
-type SqliteDatabase = Database.Database;
-
-type SettingsRow = {
-  value: string;
-};
-
-type TableColumnRow = {
-  name: string;
-};
 
 type ParticipantRow = {
   id: string;
@@ -56,6 +44,12 @@ type PendingSummaryRow = {
   latestSeq: number | null;
   earliestCreatedAt: number | null;
   latestCreatedAt: number | null;
+};
+
+type ViewerUser = {
+  email: string;
+  id: string;
+  name?: string | null;
 };
 
 export type AgentRecord = {
@@ -105,31 +99,6 @@ type WorkCandidate = {
   work: AgentWork;
 };
 
-const HUMAN_ID = "local-human";
-const API_KEY_KEY = "anthropic_api_key";
-const AUTH_TOKEN_KEY = "anthropic_auth_token";
-const BASE_URL_KEY = "anthropic_base_url";
-const SCHEDULER_PAUSED_KEY = "scheduler_paused";
-const DB_DIRECTORY = path.join(process.cwd(), "data");
-const DB_PATH = path.join(DB_DIRECTORY, "skillbar.sqlite");
-const GREETING_DELAY_MIN_MS = 1_500;
-const GREETING_DELAY_JITTER_MS = 8_500;
-const REPLY_DELAY_MIN_MS = 2_500;
-const REPLY_DELAY_JITTER_MS = 12_000;
-const PROACTIVE_IDLE_MIN_MS = 90_000;
-const PROACTIVE_IDLE_JITTER_MS = 60_000;
-const SAME_SPEAKER_PROACTIVE_PENALTY_MS = 30_000;
-const PROACTIVE_CONTEXT_LIMIT = 10;
-const CONSECUTIVE_MESSAGE_WINDOW_MS = 10_000;
-const LAZY_BURST_LIMIT_MIN = 1;
-const LAZY_BURST_LIMIT_MAX = 5;
-const LAZY_COOLDOWN_MIN_MS = 30_000;
-const LAZY_COOLDOWN_MAX_MS = 120_000;
-const ENV_KEY_BY_SETTING = {
-  [API_KEY_KEY]: "ANTHROPIC_API_KEY",
-  [AUTH_TOKEN_KEY]: "ANTHROPIC_AUTH_TOKEN",
-  [BASE_URL_KEY]: "ANTHROPIC_BASE_URL",
-} as const;
 const PARTICIPANT_SELECT_COLUMNS = `
   id,
   name,
@@ -148,20 +117,25 @@ const PARTICIPANT_SELECT_COLUMNS = `
   updated_at
 `;
 
+const GREETING_DELAY_MIN_MS = 1_500;
+const GREETING_DELAY_JITTER_MS = 8_500;
+const REPLY_DELAY_MIN_MS = 2_500;
+const REPLY_DELAY_JITTER_MS = 12_000;
+const PROACTIVE_IDLE_MIN_MS = 90_000;
+const PROACTIVE_IDLE_JITTER_MS = 60_000;
+const SAME_SPEAKER_PROACTIVE_PENALTY_MS = 30_000;
+const PROACTIVE_CONTEXT_LIMIT = 10;
+const CONSECUTIVE_MESSAGE_WINDOW_MS = 10_000;
+const LAZY_BURST_LIMIT_MIN = 1;
+const LAZY_BURST_LIMIT_MAX = 5;
+const LAZY_COOLDOWN_MIN_MS = 30_000;
+const LAZY_COOLDOWN_MAX_MS = 120_000;
+const DEFAULT_MESSAGE_INTERVAL_MS = 60_000;
+
 export type AnthropicConfig = {
   apiKey: string | null;
   authToken: string | null;
   baseUrl: string | null;
-};
-
-export type AnthropicConfigInput = {
-  apiKey: string;
-  authToken: string;
-  baseUrl: string;
-};
-
-const globalForSkillBar = globalThis as typeof globalThis & {
-  __skillBarDb?: SqliteDatabase;
 };
 
 function now() {
@@ -193,24 +167,6 @@ function drawBurstMessageLimit() {
 
 function drawCooldownDelayMs() {
   return randomInt(LAZY_COOLDOWN_MIN_MS, LAZY_COOLDOWN_MAX_MS + 1);
-}
-
-function hasTableColumn(db: SqliteDatabase, tableName: string, columnName: string) {
-  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all() as TableColumnRow[];
-  return columns.some((column) => column.name === columnName);
-}
-
-function ensureTableColumn(
-  db: SqliteDatabase,
-  tableName: string,
-  columnName: string,
-  definition: string,
-) {
-  if (hasTableColumn(db, tableName, columnName)) {
-    return;
-  }
-
-  db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
 }
 
 function normalizeBurstMessageLimit(limit: number) {
@@ -264,222 +220,138 @@ function sortWorkCandidates(left: WorkCandidate, right: WorkCandidate) {
   return left.work.agent.createdAt - right.work.agent.createdAt;
 }
 
-function getDatabase() {
-  if (!globalForSkillBar.__skillBarDb) {
-    mkdirSync(DB_DIRECTORY, { recursive: true });
+function normalizeOptionalEnvValue(value: string | undefined) {
+  const trimmed = value?.trim();
+  return trimmed ? trimmed : null;
+}
 
-    const db = new Database(DB_PATH);
-    db.pragma("journal_mode = WAL");
-    db.pragma("foreign_keys = ON");
-
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS settings (
-        key TEXT PRIMARY KEY,
-        value TEXT NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS participants (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL UNIQUE,
-        kind TEXT NOT NULL CHECK (kind IN ('human', 'agent')),
-        skill_content TEXT,
-        session_id TEXT,
-        last_seen_seq INTEGER NOT NULL DEFAULT 0,
-        needs_greeting INTEGER NOT NULL DEFAULT 0,
-        status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'thinking', 'error')),
-        last_error TEXT,
-        last_message_at INTEGER,
-        consecutive_message_count INTEGER NOT NULL DEFAULT 0,
-        burst_message_limit INTEGER NOT NULL DEFAULT 0,
-        cooldown_until INTEGER,
-        created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
-      );
-
-      CREATE TABLE IF NOT EXISTS messages (
-        seq INTEGER PRIMARY KEY AUTOINCREMENT,
-        id TEXT NOT NULL UNIQUE,
-        sender_id TEXT,
-        sender_name TEXT NOT NULL,
-        sender_kind TEXT NOT NULL CHECK (sender_kind IN ('human', 'agent', 'system')),
-        content TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
-      CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
-      CREATE INDEX IF NOT EXISTS idx_participants_kind ON participants(kind);
-    `);
-
-    ensureTableColumn(db, "participants", "last_message_at", "INTEGER");
-    ensureTableColumn(
-      db,
-      "participants",
-      "consecutive_message_count",
-      "INTEGER NOT NULL DEFAULT 0",
-    );
-    ensureTableColumn(db, "participants", "burst_message_limit", "INTEGER NOT NULL DEFAULT 0");
-    ensureTableColumn(db, "participants", "cooldown_until", "INTEGER");
-
-    const seedTime = now();
-    db.prepare(
-      `
-        INSERT OR IGNORE INTO participants (
-          id,
-          name,
-          kind,
-          skill_content,
-          session_id,
-          last_seen_seq,
-          needs_greeting,
-          status,
-          last_error,
-          created_at,
-          updated_at
-        ) VALUES (?, ?, 'human', NULL, NULL, 0, 0, 'idle', NULL, ?, ?)
-      `,
-    ).run(HUMAN_ID, "你", seedTime, seedTime);
-
-    db.prepare(
-      "UPDATE participants SET status = 'idle', updated_at = ? WHERE kind = 'agent' AND status = 'thinking'",
-    ).run(seedTime);
-
-    db.prepare(
-      `
-        UPDATE participants
-        SET burst_message_limit = 1 + ABS(RANDOM()) % 5
-        WHERE kind = 'agent' AND (burst_message_limit < 1 OR burst_message_limit > 5)
-      `,
-    ).run();
-
-    db.prepare(
-      `
-        UPDATE participants
-        SET burst_message_limit = 0
-        WHERE kind = 'human' AND burst_message_limit != 0
-      `,
-    ).run();
-
-    globalForSkillBar.__skillBarDb = db;
+function displayNameFromUser(user: Pick<ViewerUser, "email" | "name">) {
+  if (user.name?.trim()) {
+    return user.name.trim();
   }
 
-  return globalForSkillBar.__skillBarDb;
+  const [prefix] = user.email.split("@");
+  return prefix || "SkillBar User";
+}
+
+function humanParticipantIdFromUserId(userId: string) {
+  return `human:${userId}`;
+}
+
+function getMessageIntervalMs() {
+  const raw = process.env.SKILLBAR_MESSAGE_INTERVAL_MS?.trim();
+  const parsed = raw ? Number(raw) : DEFAULT_MESSAGE_INTERVAL_MS;
+
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    return DEFAULT_MESSAGE_INTERVAL_MS;
+  }
+
+  return Math.floor(parsed);
+}
+
+function isAdminUser(user: Pick<ViewerUser, "email"> | null | undefined) {
+  if (!user) {
+    return false;
+  }
+
+  const admins = (process.env.SKILLBAR_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+
+  return admins.includes(user.email.trim().toLowerCase());
+}
+
+function ensureSchema() {
+  const db = getDatabase();
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS participants (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      kind TEXT NOT NULL CHECK (kind IN ('human', 'agent')),
+      skill_content TEXT,
+      session_id TEXT,
+      last_seen_seq INTEGER NOT NULL DEFAULT 0,
+      needs_greeting INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'thinking', 'error')),
+      last_error TEXT,
+      last_message_at INTEGER,
+      consecutive_message_count INTEGER NOT NULL DEFAULT 0,
+      burst_message_limit INTEGER NOT NULL DEFAULT 0,
+      cooldown_until INTEGER,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS messages (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      id TEXT NOT NULL UNIQUE,
+      sender_id TEXT,
+      sender_name TEXT NOT NULL,
+      sender_kind TEXT NOT NULL CHECK (sender_kind IN ('human', 'agent', 'system')),
+      content TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at);
+    CREATE INDEX IF NOT EXISTS idx_messages_sender_id ON messages(sender_id);
+    CREATE INDEX IF NOT EXISTS idx_participants_kind ON participants(kind);
+    CREATE INDEX IF NOT EXISTS idx_participants_name ON participants(name);
+  `);
+
+  db.prepare(
+    `
+      UPDATE participants
+      SET status = 'idle', updated_at = ?
+      WHERE kind = 'agent' AND status = 'thinking'
+    `,
+  ).run(now());
 }
 
 function mapParticipant(row: ParticipantRow): SkillBarParticipant {
   return {
-    id: row.id,
-    name: row.name,
-    kind: row.kind,
-    status: row.status,
-    needsGreeting: Boolean(row.needs_greeting),
-    hasSession: Boolean(row.session_id),
-    lastError: row.last_error,
     createdAt: row.created_at,
+    hasSession: Boolean(row.session_id),
+    id: row.id,
+    kind: row.kind,
+    lastError: row.last_error,
+    name: row.name,
+    needsGreeting: Boolean(row.needs_greeting),
+    status: row.status,
     updatedAt: row.updated_at,
   };
 }
 
 function mapMessage(row: MessageRow): SkillBarMessage {
   return {
-    seq: row.seq,
-    id: row.id,
-    senderId: row.sender_id,
-    senderName: row.sender_name,
-    senderKind: row.sender_kind,
     content: row.content,
     createdAt: row.created_at,
+    id: row.id,
+    senderId: row.sender_id,
+    senderKind: row.sender_kind,
+    senderName: row.sender_name,
+    seq: row.seq,
   };
 }
 
 function mapAgent(row: ParticipantRow): AgentRecord {
   return {
-    id: row.id,
-    name: row.name,
-    skillContent: row.skill_content ?? "",
-    sessionId: row.session_id,
-    lastSeenSeq: row.last_seen_seq,
-    needsGreeting: Boolean(row.needs_greeting),
-    status: row.status,
-    lastError: row.last_error,
-    lastMessageAt: row.last_message_at,
-    consecutiveMessageCount: row.consecutive_message_count,
     burstMessageLimit: row.burst_message_limit,
+    consecutiveMessageCount: row.consecutive_message_count,
     cooldownUntil: row.cooldown_until,
     createdAt: row.created_at,
+    id: row.id,
+    lastError: row.last_error,
+    lastMessageAt: row.last_message_at,
+    lastSeenSeq: row.last_seen_seq,
+    name: row.name,
+    needsGreeting: Boolean(row.needs_greeting),
+    sessionId: row.session_id,
+    skillContent: row.skill_content ?? "",
+    status: row.status,
     updatedAt: row.updated_at,
   };
-}
-
-function getSetting(key: string) {
-  const db = getDatabase();
-  const row = db
-    .prepare("SELECT value FROM settings WHERE key = ?")
-    .get(key) as SettingsRow | undefined;
-
-  return row?.value ?? null;
-}
-
-function getSettingWithEnvFallback(key: keyof typeof ENV_KEY_BY_SETTING) {
-  const storedValue = getSetting(key);
-  if (storedValue) {
-    return storedValue;
-  }
-
-  const envValue = process.env[ENV_KEY_BY_SETTING[key]];
-  if (!envValue) {
-    return null;
-  }
-
-  return normalizeSettingValue(envValue);
-}
-
-function normalizeSettingValue(value: string) {
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-export function hasAnthropicCredentials(config: Pick<AnthropicConfig, "apiKey" | "authToken">) {
-  return Boolean(config.apiKey || config.authToken);
-}
-
-function buildAnthropicSnapshot(config: AnthropicConfig): AnthropicSettingsSnapshot {
-  return {
-    apiKeyConfigured: Boolean(config.apiKey),
-    authTokenConfigured: Boolean(config.authToken),
-    baseUrlConfigured: Boolean(config.baseUrl),
-    credentialsConfigured: hasAnthropicCredentials(config),
-  };
-}
-
-function buildSchedulerSnapshot(): SchedulerSnapshot {
-  return {
-    paused: isSchedulerPaused(),
-  };
-}
-
-function setSetting(key: string, value: string) {
-  const db = getDatabase();
-
-  db.prepare(
-    `
-      INSERT INTO settings (key, value, updated_at)
-      VALUES (?, ?, ?)
-      ON CONFLICT(key) DO UPDATE SET
-        value = excluded.value,
-        updated_at = excluded.updated_at
-    `,
-  ).run(key, value, now());
-}
-
-function deleteSetting(key: string) {
-  const db = getDatabase();
-  db.prepare("DELETE FROM settings WHERE key = ?").run(key);
-}
-
-export function isSchedulerPaused() {
-  return getSetting(SCHEDULER_PAUSED_KEY) === "1";
 }
 
 function insertMessage(
@@ -653,127 +525,134 @@ function getLatestMessageRow() {
     .get() as MessageRow | undefined;
 }
 
-export function getAnthropicConfig(): AnthropicConfig {
+function getLastHumanMessageAt(participantId: string) {
+  const db = getDatabase();
+  const row = db
+    .prepare(
+      `
+        SELECT MAX(created_at) AS lastMessageAt
+        FROM messages
+        WHERE sender_id = ?
+          AND sender_kind = 'human'
+      `,
+    )
+    .get(participantId) as { lastMessageAt: number | null };
+
+  return row.lastMessageAt ?? null;
+}
+
+function buildRuntimeSnapshot(): RuntimeSnapshot {
   return {
-    apiKey: getSettingWithEnvFallback(API_KEY_KEY),
-    authToken: getSettingWithEnvFallback(AUTH_TOKEN_KEY),
-    baseUrl: getSettingWithEnvFallback(BASE_URL_KEY),
+    ready: hasAnthropicCredentials(getAnthropicConfig()),
   };
 }
 
-export function saveAnthropicConfig(input: AnthropicConfigInput) {
-  const config = {
-    apiKey: normalizeSettingValue(input.apiKey),
-    authToken: normalizeSettingValue(input.authToken),
-    baseUrl: normalizeSettingValue(input.baseUrl),
-  } satisfies AnthropicConfig;
+function buildViewerSnapshot(user?: ViewerUser | null): ViewerSnapshot {
+  const messageIntervalMs = getMessageIntervalMs();
 
-  if (!config.apiKey && !config.authToken && !config.baseUrl) {
-    deleteSetting(API_KEY_KEY);
-    deleteSetting(AUTH_TOKEN_KEY);
-    deleteSetting(BASE_URL_KEY);
-    return getSnapshot();
+  if (!user) {
+    return {
+      authenticated: false,
+      canSendMessage: false,
+      email: null,
+      id: null,
+      isAdmin: false,
+      messageIntervalMs,
+      name: null,
+      nextAllowedMessageAt: null,
+      participantId: null,
+      remainingCooldownMs: 0,
+    };
   }
 
-  if (!hasAnthropicCredentials(config)) {
-    throw new Error("ANTHROPIC_API_KEY 和 ANTHROPIC_AUTH_TOKEN 至少填写一个。");
-  }
-
-  if (config.baseUrl) {
-    try {
-      new URL(config.baseUrl);
-    } catch {
-      throw new Error("ANTHROPIC_BASE_URL 必须是合法 URL。");
-    }
-  }
-
-  if (config.apiKey) {
-    setSetting(API_KEY_KEY, config.apiKey);
-  } else {
-    deleteSetting(API_KEY_KEY);
-  }
-
-  if (config.authToken) {
-    setSetting(AUTH_TOKEN_KEY, config.authToken);
-  } else {
-    deleteSetting(AUTH_TOKEN_KEY);
-  }
-
-  if (config.baseUrl) {
-    setSetting(BASE_URL_KEY, config.baseUrl);
-  } else {
-    deleteSetting(BASE_URL_KEY);
-  }
-
-  const db = getDatabase();
-  db.prepare(
-    `
-      UPDATE participants
-      SET
-        status = 'idle',
-        last_error = NULL,
-        updated_at = ?
-      WHERE kind = 'agent' AND status = 'error'
-    `,
-  ).run(now());
-
-  return getSnapshot();
-}
-
-export function setSchedulerPaused(paused: boolean) {
-  if (paused) {
-    setSetting(SCHEDULER_PAUSED_KEY, "1");
-  } else {
-    deleteSetting(SCHEDULER_PAUSED_KEY);
-  }
-
-  return getSnapshot();
-}
-
-export function getSnapshot() {
-  const anthropic = buildAnthropicSnapshot(getAnthropicConfig());
-  const scheduler = buildSchedulerSnapshot();
+  const participantId = humanParticipantIdFromUserId(user.id);
+  const admin = isAdminUser(user);
+  const lastMessageAt = getLastHumanMessageAt(participantId);
+  const nextAllowedMessageAt =
+    admin || lastMessageAt === null ? null : lastMessageAt + messageIntervalMs;
+  const remainingCooldownMs = nextAllowedMessageAt
+    ? Math.max(nextAllowedMessageAt - now(), 0)
+    : 0;
 
   return {
-    anthropic,
-    scheduler,
-    participants: listParticipantRows().map(mapParticipant),
-    messages: listMessageRows().map(mapMessage),
+    authenticated: true,
+    canSendMessage: admin || remainingCooldownMs === 0,
+    email: user.email,
+    id: user.id,
+    isAdmin: admin,
+    messageIntervalMs,
+    name: displayNameFromUser(user),
+    nextAllowedMessageAt,
+    participantId,
+    remainingCooldownMs,
+  };
+}
+
+function ensureHumanParticipant(user: ViewerUser) {
+  const db = getDatabase();
+  const participantId = humanParticipantIdFromUserId(user.id);
+  const timestamp = now();
+
+  db.prepare(
+    `
+      INSERT INTO participants (
+        id,
+        name,
+        kind,
+        skill_content,
+        session_id,
+        last_seen_seq,
+        needs_greeting,
+        status,
+        last_error,
+        last_message_at,
+        consecutive_message_count,
+        burst_message_limit,
+        cooldown_until,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, 'human', NULL, NULL, 0, 0, 'idle', NULL, NULL, 0, 0, NULL, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        name = excluded.name,
+        updated_at = excluded.updated_at
+    `,
+  ).run(participantId, displayNameFromUser(user), timestamp, timestamp);
+
+  return participantId;
+}
+
+function formatCooldownMessage(remainingCooldownMs: number) {
+  const seconds = Math.max(1, Math.ceil(remainingCooldownMs / 1000));
+  return `发送太快了，请在 ${seconds} 秒后再试。`;
+}
+
+export function hasAnthropicCredentials(config: Pick<AnthropicConfig, "apiKey" | "authToken">) {
+  return Boolean(config.apiKey || config.authToken);
+}
+
+export function getAnthropicConfig(): AnthropicConfig {
+  return {
+    apiKey: normalizeOptionalEnvValue(process.env.ANTHROPIC_API_KEY),
+    authToken: normalizeOptionalEnvValue(process.env.ANTHROPIC_AUTH_TOKEN),
+    baseUrl: normalizeOptionalEnvValue(process.env.ANTHROPIC_BASE_URL),
+  };
+}
+
+export function getSnapshot(user?: ViewerUser | null) {
+  ensureSchema();
+
+  return {
     latestSeq: getLatestSeq(),
+    messages: listMessageRows().map(mapMessage),
+    participants: listParticipantRows().map(mapParticipant),
+    runtime: buildRuntimeSnapshot(),
+    viewer: buildViewerSnapshot(user),
   } satisfies SkillBarSnapshot;
 }
 
-export function resetSkillBarState() {
-  const db = getDatabase();
-  const resetAt = now();
-
-  db.transaction(() => {
-    deleteSetting(SCHEDULER_PAUSED_KEY);
-    db.prepare("DELETE FROM messages").run();
-    db.prepare("DELETE FROM participants WHERE kind = 'agent'").run();
-    db.prepare(
-      `
-        UPDATE participants
-        SET
-          session_id = NULL,
-          last_seen_seq = 0,
-          needs_greeting = 0,
-          status = 'idle',
-          last_error = NULL,
-          last_message_at = NULL,
-          consecutive_message_count = 0,
-          burst_message_limit = 0,
-          cooldown_until = NULL,
-          updated_at = ?
-        WHERE id = ?
-      `,
-    ).run(resetAt, HUMAN_ID);
-  })();
-
-  return getSnapshot();
-}
-
 export function upsertAgentFromSkill(name: string, skillContent: string) {
+  ensureSchema();
+
   const db = getDatabase();
   const trimmedName = name.trim();
   const trimmedSkill = skillContent.trim();
@@ -792,14 +671,11 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
         SELECT
           ${PARTICIPANT_SELECT_COLUMNS}
         FROM participants
-        WHERE name = ?
+        WHERE kind = 'agent' AND name = ?
+        LIMIT 1
       `,
     )
     .get(trimmedName) as ParticipantRow | undefined;
-
-  if (existing && existing.kind !== "agent") {
-    throw new Error(`名字“${trimmedName}”已经被占用。`);
-  }
 
   const updatedAt = now();
 
@@ -858,18 +734,34 @@ export function upsertAgentFromSkill(name: string, skillContent: string) {
   return getSnapshot();
 }
 
-export function addUserMessage(content: string) {
+export function addUserMessage(user: ViewerUser | null | undefined, content: string) {
+  ensureSchema();
+
+  if (!user) {
+    throw new Error("请先登录后再发送消息。");
+  }
+
   const trimmed = content.trim();
 
   if (!trimmed) {
     throw new Error("消息不能为空。");
   }
 
-  insertMessage(HUMAN_ID, "你", "human", trimmed);
-  return getSnapshot();
+  const viewer = buildViewerSnapshot(user);
+
+  if (!viewer.canSendMessage) {
+    throw new Error(formatCooldownMessage(viewer.remainingCooldownMs));
+  }
+
+  const participantId = ensureHumanParticipant(user);
+  insertMessage(participantId, displayNameFromUser(user), "human", trimmed);
+
+  return getSnapshot(user);
 }
 
 export function addAgentMessage(agentId: string, content: string) {
+  ensureSchema();
+
   const db = getDatabase();
   const agent = db
     .prepare(
@@ -887,6 +779,7 @@ export function addAgentMessage(agentId: string, content: string) {
   }
 
   const trimmed = content.trim();
+
   if (!trimmed) {
     return;
   }
@@ -917,6 +810,8 @@ export function addAgentMessage(agentId: string, content: string) {
 }
 
 export function markAgentThinking(agentId: string) {
+  ensureSchema();
+
   const db = getDatabase();
 
   db.prepare(
@@ -935,6 +830,8 @@ export function completeAgentTurn(agentId: string, args: {
   sessionId: string | null;
   visibleSeq: number;
 }) {
+  ensureSchema();
+
   const db = getDatabase();
 
   db.prepare(
@@ -956,6 +853,8 @@ export function completeAgentTurn(agentId: string, args: {
 }
 
 export function markAgentError(agentId: string, error: string, sessionId?: string | null) {
+  ensureSchema();
+
   const db = getDatabase();
 
   db.prepare(
@@ -972,6 +871,8 @@ export function markAgentError(agentId: string, error: string, sessionId?: strin
 }
 
 export function getPendingAgentWork(limit: number) {
+  ensureSchema();
+
   if (limit <= 0) {
     return [];
   }
@@ -1017,8 +918,8 @@ export function getPendingAgentWork(limit: number) {
         dueAt,
         pendingSinceAt: agent.updatedAt,
         work: {
-          kind: "greeting",
           agent,
+          kind: "greeting",
           members,
           visibleSeq: latestSeq,
         },
@@ -1027,6 +928,7 @@ export function getPendingAgentWork(limit: number) {
     }
 
     const summary = getVisibleMessageSummary(agent.id, agent.lastSeenSeq);
+
     if (!summary.total || !summary.latestSeq) {
       continue;
     }
@@ -1052,8 +954,8 @@ export function getPendingAgentWork(limit: number) {
       dueAt,
       pendingSinceAt: summary.earliestCreatedAt ?? messages[0]?.createdAt ?? agent.updatedAt,
       work: {
-        kind: "reply",
         agent,
+        kind: "reply",
         members,
         messages,
         omittedCount: Math.max(summary.total - messages.length, 0),
@@ -1098,12 +1000,12 @@ export function getPendingAgentWork(limit: number) {
       dueAt: proactiveDueAt,
       pendingSinceAt: anchorTime,
       work: {
-        kind: "proactive-question",
         agent,
+        kind: "proactive-question",
         members,
+        recentMessages,
         visibleSeq: latestSeq,
         idleForMs: currentTime - latestMessage.created_at,
-        recentMessages,
       },
     });
   }
