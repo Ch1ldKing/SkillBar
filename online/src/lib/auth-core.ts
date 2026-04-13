@@ -55,6 +55,10 @@ export const authProviderFlags = {
 
 export const auth = betterAuth({
   baseURL: getBetterAuthUrl(),
+  trustedOrigins: [
+    "https://skillbar.dorianyang.com",
+    "http://119.8.162.120:3000",
+  ],
   database: getDatabase(),
   emailAndPassword: {
     enabled: true,
