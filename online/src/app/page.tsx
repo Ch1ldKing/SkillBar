@@ -7,6 +7,8 @@ import type { SkillBarBootstrap } from "@/lib/skillbar-types";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const defaultVercelBackendOrigin = "http://119.8.162.120:3000";
+
 type HomeProps = {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 };
@@ -37,7 +39,9 @@ function normalizeOrigin(value: string) {
 }
 
 function getBootstrapUrlFromHeaders(headerStore: Headers) {
-  const backendOrigin = process.env.SKILLBAR_BACKEND_ORIGIN?.trim();
+  const backendOrigin =
+    process.env.SKILLBAR_BACKEND_ORIGIN?.trim() ||
+    (process.env.VERCEL ? defaultVercelBackendOrigin : undefined);
 
   if (backendOrigin) {
     return `${normalizeOrigin(backendOrigin)}/api/bootstrap`;

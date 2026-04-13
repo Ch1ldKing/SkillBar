@@ -717,15 +717,17 @@ export function SkillBarApp({ authProviders, initialSnapshot }: SkillBarAppProps
   }
 
   function renderAvatar(name: string, sizeClassName: string) {
+    const isSkillBarAvatar = name === "SkillBar";
+
     return (
       <div
         className={cn(
           "flex shrink-0 items-center justify-center rounded-full text-xs font-semibold",
           sizeClassName,
-          getAvatarTone(name),
+          isSkillBarAvatar ? "bg-amber-100 text-amber-700" : getAvatarTone(name),
         )}
       >
-        {getInitials(name)}
+        {isSkillBarAvatar ? "🍺" : getInitials(name)}
       </div>
     );
   }

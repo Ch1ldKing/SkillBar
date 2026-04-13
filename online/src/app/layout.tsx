@@ -4,6 +4,9 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "SkillBar Online",
   description: "Online SkillBar group chat with optional login.",
+  icons: {
+    icon: "/icon",
+  },
 };
 
 export default function RootLayout({

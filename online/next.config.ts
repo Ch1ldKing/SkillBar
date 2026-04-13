@@ -4,7 +4,10 @@ import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
 const workspaceRoot = path.dirname(fileURLToPath(import.meta.url));
-const backendOrigin = process.env.SKILLBAR_BACKEND_ORIGIN?.trim();
+const defaultVercelBackendOrigin = "http://119.8.162.120:3000";
+const backendOrigin =
+  process.env.SKILLBAR_BACKEND_ORIGIN?.trim() ||
+  (process.env.VERCEL ? defaultVercelBackendOrigin : undefined);
 
 function normalizeOrigin(value: string) {
   return value.endsWith("/") ? value.slice(0, -1) : value;

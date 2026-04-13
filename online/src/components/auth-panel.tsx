@@ -2,7 +2,8 @@
 
 import Image from "next/image";
 import { startTransition, useState } from "react";
-import { GitBranch, LockKeyhole, Mail, UserRound } from "lucide-react";
+import { LockKeyhole, Mail, UserRound } from "lucide-react";
+import { FaGithub } from "react-icons/fa";
 
 import linuxDoLogo from "@/assets/linuxdo.webp";
 import { authClient } from "@/lib/auth-client";
@@ -125,7 +126,7 @@ export function AuthPanel({ providers }: AuthPanelProps) {
               onClick={handleGithubLogin}
               type="button"
             >
-              <GitBranch className="h-5 w-5" />
+              <FaGithub className="h-5 w-5" />
               使用 GitHub 登录
             </button>
           ) : null}
